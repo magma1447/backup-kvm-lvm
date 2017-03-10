@@ -1,10 +1,7 @@
 #!/usr/bin/python
 
 
-#####
-# github link
-# by GZC
-#####
+# Home: https://github.com/magma1447/backup-kvm-lvm
 
 
 from __future__ import print_function
@@ -14,7 +11,6 @@ import ConfigParser
 import sys
 import xml.etree.ElementTree
 import tempfile
-#from shutil import copyfile
 import shutil
 import re
 import time # debug
@@ -163,10 +159,42 @@ def GetValueOfTagFromDevice(device, tag):
 	stdout = subprocess.check_output([Config.get('General', 'blkid'), '-o', 'value', '-s', tag, device])
 	return stdout.strip()
 
+def SaveLVDisplay(sourceDevice, targetDevice):
+	# lvdisplay, needed to recreate the logical volume
+	filename = 'disks/' + targetDevice + '.lvdisplay'
+	stdout = subprocess.check_output([Config.get('LVM', 'lvdisplay'), sourceDevice])
+	fp = open(filename, 'w')
+	fp.write(stdout)
+	fp.close()
+	filesCreated.append(filename)
+
+def BackupPartitionTable(sourceDevice, targetDevice):
+	# sfdisk, for recreating the partition table
+	filename = 'disks/' + targetDevice + '.sfdisk'
+	stdout = subprocess.check_output([Config.get('General', 'sfdisk'), '-d', sourceDevice])
+	fp = open(filename, 'w')
+	fp.write(stdout)
+	fp.close()
+	filesCreated.append(filename)
+
+	# fdisk -l, most likely not needed, but gives the user an easy glance
+	filename = 'disks/' + targetDevice + '.fdisk'
+	stdout = subprocess.check_output([Config.get('General', 'fdisk'), '-l', sourceDevice])
+	fp = open(filename, 'w')
+	fp.write(stdout)
+	fp.close()
+	filesCreated.append(filename)
+
+def BackupMBR(sourceDevice, targetDevice):
+	# mbr
+	filename = 'disks/' + targetDevice + '.mbr'
+	proc = subprocess.Popen([Config.get('General', 'dd'), 'if=' + sourceDevice, 'bs=512', 'count=1', 'of=' + filename])
+	proc.wait()
+	filesCreated.append(filename)
 
 
 
-confFile = 'backup-kvm.conf'
+confFile = 'backup-kvm-lvm.conf'
 FNULL = open(os.devnull, 'w')
 
 
@@ -210,13 +238,17 @@ for guest in guestConfigs:
 		print("Device %s => %s" % (sourceDevice, targetDevice))
 		CreateLVMSnapshot(sourceDevice)
 		LVMsnapshots.append(sourceDevice)
+
+		SaveLVDisplay(sourceDevice, targetDevice)
+
 		pttype = GetValueOfTagFromDevice(sourceDevice, 'PTTYPE')
 		if pttype == 'dos':
 			print("Device seems to be a disk in the guest")
 			os.mkdir('disks/' + targetDevice)
 			directoriesCreated.append('disks/' + targetDevice)
 
-			# TODO sfdisk, mbr, fdisk -l, lvdisplay device
+			BackupPartitionTable(sourceDevice, targetDevice)
+			BackupMBR(sourceDevice, targetDevice)
 
 			partitionDevices = CreatePartitionMappings(sourceDevice)
 			for partitionDevice in partitionDevices:
@@ -246,7 +278,9 @@ for guest in guestConfigs:
 
 		else:
 			print("PTTYPE of device isn't dos. Assuming the device is a partition of some kind")
-			# TODO sfdisk, mbr, fdisk -l, lvdisplay device
+			BackupPartitionTable(sourceDevice, targetDevice)
+			# It's not likely that there actually is a MBR on this device, but let's be safe.
+			BackupMBR(sourceDevice, targetDevice)
 
 
 			partitionType = GetValueOfTagFromDevice(sourceDevice, 'TYPE')
@@ -273,6 +307,7 @@ for guest in guestConfigs:
 
 
 	time.sleep(2)
+	# TODO Check the config if we need to mount anything
 	# TODO actually create a backup here. Either with borgbackup or fsarchiver
 
 
