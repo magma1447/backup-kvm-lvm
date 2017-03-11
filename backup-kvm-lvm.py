@@ -3,6 +3,14 @@
 
 # Home: https://github.com/magma1447/backup-kvm-lvm
 
+# TODO
+# Implement options to mount/umount a remote server with sshfs (some old related code still exists)
+# Implement a "igore-disk", Let the hostname be the header in the config.
+# Add support for sshfs
+# Add support for fsarchiver
+# Add support for pre-hook, ie mysql lock tables
+# Per host/disk overrides for other options, like borg compression
+
 
 from __future__ import print_function
 import os
@@ -13,7 +21,6 @@ import xml.etree.ElementTree
 import tempfile
 import shutil
 import re
-import time # debug
 
 
 def eprint(*args, **kwargs):
@@ -192,6 +199,57 @@ def BackupMBR(sourceDevice, targetDevice):
 	proc.wait()
 	filesCreated.append(filename)
 
+def BackupUUID(targetDevice, p):
+	uuid = GetValueOfTagFromDevice('/dev/mapper/' + partitionDevice , 'UUID')
+	filename = 'disks/' + targetDevice + '/' + p + '.UUID'
+	fp = open(filename, 'w')
+	fp.write(uuid)
+	fp.close()
+	filesCreated.append(filename)
+
+def Borgbackup(name):
+	print("Starting backup (borgbackup)")
+	borgEnv = os.environ.copy()
+	borgEnv["BORG_RSH"] = Config.get('Method-Borgbackup', 'RSH')
+	borgEnv["BORG_PASSPHRASE"] = Config.get('Method-Borgbackup', 'PASSPHRASE')
+	cmd = [
+		Config.get('Method-Borgbackup', 'binary'),
+		'create',
+		'--numeric-owner',
+		'--lock-wait',
+		Config.get('Method-Borgbackup', 'LockWait'),
+		'--compression',
+		Config.get('Method-Borgbackup', 'Compression'),
+		Config.get('Method-Borgbackup', 'Repository') + '::' + name + '_{now}',
+		'.'
+	]
+	proc = subprocess.Popen(cmd, env=borgEnv)
+	proc.wait()
+	if proc.returncode != 0:
+		eprint("borgbackup create failed")
+		exit(1)
+
+	print("Running a repository check")
+	borgEnv = os.environ.copy()
+	borgEnv["BORG_RSH"] = Config.get('Method-Borgbackup', 'RSH')
+	borgEnv["BORG_PASSPHRASE"] = Config.get('Method-Borgbackup', 'PASSPHRASE')
+	cmd = [
+		Config.get('Method-Borgbackup', 'binary'),
+		'check',
+		'--lock-wait',
+		Config.get('Method-Borgbackup', 'LockWait'),
+		'--last',
+		Config.get('Method-Borgbackup', 'CheckLast'),
+		Config.get('Method-Borgbackup', 'Repository')
+	]
+	proc = subprocess.Popen(cmd, env=borgEnv)
+	proc.wait()
+	if proc.returncode != 0:
+		eprint("borgbackup check failed")
+		exit(1)
+	
+	print("Borgbackup done")
+
 
 
 confFile = 'backup-kvm-lvm.conf'
@@ -236,6 +294,10 @@ for guest in guestConfigs:
 	mountPoints = []
 	for targetDevice, sourceDevice in guest['disks'].iteritems():
 		print("Device %s => %s" % (sourceDevice, targetDevice))
+
+		os.mkdir('disks/' + targetDevice)
+		directoriesCreated.append('disks/' + targetDevice)
+
 		CreateLVMSnapshot(sourceDevice)
 		LVMsnapshots.append(sourceDevice)
 
@@ -244,22 +306,32 @@ for guest in guestConfigs:
 		pttype = GetValueOfTagFromDevice(sourceDevice, 'PTTYPE')
 		if pttype == 'dos':
 			print("Device seems to be a disk in the guest")
-			os.mkdir('disks/' + targetDevice)
-			directoriesCreated.append('disks/' + targetDevice)
 
 			BackupPartitionTable(sourceDevice, targetDevice)
 			BackupMBR(sourceDevice, targetDevice)
 
 			partitionDevices = CreatePartitionMappings(sourceDevice)
 			for partitionDevice in partitionDevices:
+				m = re.search("P\d+$", partitionDevice)
+				p = m.group(0)
+				
+				BackupUUID(targetDevice, p)
+
 				partitionPttype = GetValueOfTagFromDevice('/dev/mapper/' + partitionDevice , 'PTTYPE')
 				partitionType = GetValueOfTagFromDevice('/dev/mapper/' + partitionDevice , 'TYPE')
 				if partitionType == 'ext2' or partitionType == 'ext3' or partitionType == 'ext4':
 					print("Partition %s has a readable filesystem (%s)" % (partitionDevice, partitionType))
-					m = re.search("P\d+$", partitionDevice)
-					p = m.group(0)
 					os.mkdir('disks/' + targetDevice + '/' + p)
 					directoriesCreated.append('disks/' + targetDevice + '/' + p)
+
+					# Store a 'tune2fs -l'
+					filename = 'disks/' + targetDevice + '/' + p + '.ext'
+					stdout = subprocess.check_output([Config.get('General', 'tune2fs'), '-l', '/dev/mapper/' + partitionDevice])
+					fp = open(filename, 'w')
+					fp.write(stdout)
+					fp.close()
+					filesCreated.append(filename)
+
 
 					proc = subprocess.Popen([Config.get('General', 'mount'), '/dev/mapper/' + partitionDevice, 'disks/' + targetDevice + '/' + p])
 					proc.wait()
@@ -306,9 +378,13 @@ for guest in guestConfigs:
 			
 
 
-	time.sleep(2)
-	# TODO Check the config if we need to mount anything
-	# TODO actually create a backup here. Either with borgbackup or fsarchiver
+	if Config.get('Backup', 'Method') == 'Borgbackup':
+		Borgbackup(guest['name'])
+	else:
+		eprint("Unknown backup method")
+		exit(1)
+
+	
 
 
 	print("Starting to cleanup after %s" % guest)

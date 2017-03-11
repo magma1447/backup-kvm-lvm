@@ -1,0 +1,95 @@
+THE RESTORE HAS WRONG UID/GID ON EVERYTHING
+
+
+# List the backups for a specific host.
+borgbackup list --prefix pgc-http-01 ../kvm-03.borg/
+
+# Extract a backup, needs to be extracted as root to keep uid/gid's.
+sudo borgbackup extract --sparse ../kvm-03.borg/pgc-http-01_2017-03-11T01:01:21
+
+# In case you did not restore the files directly to the KVM host we need to transfer them. Or at least some of them. The files for the filesystem could be transfered directly to that if we have issues with free space.
+# Create a temporary directory on the KVM host for the restore files. I use an LV I have created, formatted and mounted.
+cd /mnt/restore/
+mkdir restore_pgc-http-01 && cd restore_pgc-http-01/
+rsync --recursive --archive --numeric-ids --sparse --no-i-r root@thor:/data/borg-WedFriSun/_/* .
+
+
+
+# Start restoring disks
+cd disks/
+
+# For each device we will need to do a few things.
+
+# Look at vda.lvdisplay to see the LV name and size.
+cat vda.lvdisplay 
+# Create the LV with those settings.
+lvcreate -n pgc-http-01 -L 10G vg00
+
+# If the VG name has changed, edit /etc/libvirt/qemu/pgc-http-01.xml accordingly.
+
+# Restore the MBR
+dd if=vda.mbr of=/dev/vg00/pgc-http-01
+# Restore the partition table. Normally a part of the first 512 bytes which we restored together with the MBR, but sfdisk has support for a few more advanced cases.
+sfdisk --no-reread /dev/vg00/pgc-http-01 < vda.sfdisk
+# Create device mappings so that we can manage the partitions inside the LV-disk.
+kpartx -av -p P -s /dev/vg00/pgc-http-01
+# Create the filesystem (if the partition had one)
+# When writing this we did not store the UUID in the backup, we plan to patch that. If you don't have it, it's likely to exist in /etc/fstab
+mkfs.ext4 -U 50dd7a67-f186-4a32-ba9b-85da50ef5ec5 /dev/mapper/vg00-pgc--http--01P1
+# Mount the filesystem and start restoring files
+mkdir /mnt/P1
+mount /dev/mapper/vg00-pgc--http--01P1 /mnt/P1
+rsync --recursive --archive --numeric-ids --sparse --no-i-r vda/P1/* /mnt/P1/
+umount /mnt/P1
+
+
+	# Having issues booting, the below did not work either
+	mount -t proc none /mnt/P1/proc/
+	mount -o bind /dev /mnt/P1/dev/
+	mount -t sysfs sys /mnt/P1/sys/
+	chroot /mnt/P1/ bash
+	update-grub
+
+	umount /mnt/P1/var/lib/os-prober/mount
+	umount /mnt/P1/sys
+	umount /mnt/P1/dev
+	umount /mnt/P1/proc
+
+	# Test 2
+	mount --bind /dev /mnt/P1/dev
+	mount --bind /dev/pts /mnt/P1/dev/pts
+	mount --bind /proc /mnt/P1/proc
+	mount --bind /sys /mnt/P1/sys
+	chroot /mnt/P1
+	grub-install /dev/vg00/pgc-http-01
+	grub-install --recheck /dev/vg00/pgc-http-01
+	update-grub
+	exit
+	umount /mnt/P1/sys
+	umount /mnt/P1/proc
+	umount /mnt/P1/dev/pts
+	umount /mnt/P1/dev
+
+
+
+# Restore the swap file. If we don't have the UUID, try to find it in /etc/fstab
+mkswap -U e3429ba8-5bcf-4f19-bf49-b8b0f6db4244 /dev/mapper/vg00-pgc--http--01P5
+
+# Remove the partition mappings
+kpartx -d -p P /dev/vg00/pgc-http-01
+
+# When done with disks, leave the directory and create the guest
+cp --archive pgc-http-01.xml /etc/libvirt/qemu/
+virsh define /etc/libvirt/qemu/pgc-http-01.xml 
+
+# Test start the guest by using your favorite method, virsh, virt-manager ...
+
+# Known issues
+* If it warns about AES support in the CPU, change the CPU in the configuration. With virt-manager, open, hardware details, CPUs, check "Copy host CPU configuration".
+* vda1 has unsupported features metadata_csum: The kvm host seems to have a newer mkfs.ext4 than your guest. You should recreate the filesystem using -O ^metadata_csum.
+
+
+
+TODO: Backup script needs to save UUID of partitions, including swap. We could also save file system information. For example tune2fs -l in case of ext*.
+
+
