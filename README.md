@@ -1,6 +1,6 @@
 # backup-kvm-lvm
 #### Description
-Makes a full backup of a KVM guest and it filesystems using Borgbackup or FSArchiver. SSHFS can optionally be used for the backup endpoint.
+Makes a full backup of a KVM guests and their filesystems using Borgbackup or FSArchiver. SSHFS can optionally be used for the backup endpoint.
 
 This is still a work in progress, it's not useful yet, though I expect it to be useful within a week.
 

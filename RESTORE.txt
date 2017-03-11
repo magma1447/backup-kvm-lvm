@@ -1,4 +1,4 @@
-THE RESTORE HAS WRONG UID/GID ON EVERYTHING
+# Note that autostart of the guests aren't stored anywhere.
 
 
 # List the backups for a specific host.
@@ -87,9 +87,4 @@ virsh define /etc/libvirt/qemu/pgc-http-01.xml
 # Known issues
 * If it warns about AES support in the CPU, change the CPU in the configuration. With virt-manager, open, hardware details, CPUs, check "Copy host CPU configuration".
 * vda1 has unsupported features metadata_csum: The kvm host seems to have a newer mkfs.ext4 than your guest. You should recreate the filesystem using -O ^metadata_csum.
-
-
-
-TODO: Backup script needs to save UUID of partitions, including swap. We could also save file system information. For example tune2fs -l in case of ext*.
-
 
