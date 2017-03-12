@@ -134,33 +134,53 @@ def GetGuestConfigs():
 	return guestConfigs
 
 def CreateLVMSnapshot(sourceDevice):
-	proc = subprocess.Popen([Config.get('LVM', 'lvcreate'), '-L' + Config.get('LVM', 'SnapshotSize'), '-s', '-n', os.path.basename(sourceDevice) + Config.get('LVM', 'SnapshotSuffix'), sourceDevice])
+	snapshotName = os.path.basename(sourceDevice) + Config.get('LVM', 'SnapshotSuffix')
+	proc = subprocess.Popen([Config.get('LVM', 'lvcreate'), '-L' + Config.get('LVM', 'SnapshotSize'), '-s', '-n', snapshotName, sourceDevice])
         r = proc.wait()
 	if r != 0:
 		eprint("Failed to create snapshot of %s" % sourceDevice)
 		exit(1)
 
-def RemoveLVMSnapshot(sourceDevice):
-	proc = subprocess.Popen([Config.get('LVM', 'lvremove'), '-f', sourceDevice + Config.get('LVM', 'SnapshotSuffix')])
-        r = proc.wait()
-	if r != 0:
-		eprint("Failed to remove snapshot of %s" % sourceDevice)
+	# Find the VG name
+	VG = None
+	stdout = subprocess.check_output([Config.get('LVM', 'lvdisplay'), sourceDevice + Config.get('LVM', 'SnapshotSuffix')])
+	stdout = stdout.split("\n")
+	for line in stdout:
+		line = line.strip()
+		m = re.match("^VG Name\s+(.*)$", line)
+		if m != None:
+			VG = m.groups()[0]
+			break
+
+	if VG == None:
+		eprint("Failed to find VG for snapshot of %s" % sourceDevice)
 		exit(1)
 
-def CreatePartitionMappings(sourceDevice):
+	snapshotDevice = "/dev/" + VG + "/" + snapshotName
+
+	return snapshotDevice
+
+def RemoveLVMSnapshot(snapshotDevice):
+	proc = subprocess.Popen([Config.get('LVM', 'lvremove'), '-f', snapshotDevice])
+        r = proc.wait()
+	if r != 0:
+		eprint("Failed to remove snapshot %s" % snapshotDevice)
+		exit(1)
+
+def CreatePartitionMappings(snapshotDevice):
 	#kpartx -av -p P -s /dev/pgc-kvm-03-SAS600/pgc-http-01-kvmbackupsnapshot
-	stdout = subprocess.check_output([Config.get('General', 'kpartx'), '-a', '-v', '-p', 'P', '-s', sourceDevice + Config.get('LVM', 'SnapshotSuffix')])
+	stdout = subprocess.check_output([Config.get('General', 'kpartx'), '-a', '-v', '-p', 'P', '-s', snapshotDevice])
 	devices = []
 	for line in stdout.splitlines():
 		devices.append(line.split()[2])
 	return devices
 
-def RemovePartitionMappings(sourceDevice):
+def RemovePartitionMappings(snapshotDevice):
 	#kpartx -d -p P /dev/pgc-kvm-03-SAS600/pgc-http-01-kvmbackupsnapshot
-	proc = subprocess.Popen([Config.get('General', 'kpartx'), '-d', '-p', 'P', sourceDevice + Config.get('LVM', 'SnapshotSuffix')])
+	proc = subprocess.Popen([Config.get('General', 'kpartx'), '-d', '-p', 'P', snapshotDevice])
         r = proc.wait()
 	if r != 0:
-		eprint("Failed to remove partition mappings for %s" % sourceDevice)
+		eprint("Failed to remove partition mappings for %s" % snapshotDevice)
 		exit(1)
 
 def GetValueOfTagFromDevice(device, tag):
@@ -305,19 +325,19 @@ for guest in guestConfigs:
 		os.mkdir('disks/' + targetDevice)
 		directoriesCreated.append('disks/' + targetDevice)
 
-		CreateLVMSnapshot(sourceDevice)
-		LVMsnapshots.append(sourceDevice)
+		snapshotDevice = CreateLVMSnapshot(sourceDevice)
+		LVMsnapshots.append(snapshotDevice)
 
 		SaveLVDisplay(sourceDevice, targetDevice)
 
-		pttype = GetValueOfTagFromDevice(sourceDevice, 'PTTYPE')
+		pttype = GetValueOfTagFromDevice(snapshotDevice, 'PTTYPE')
 		if pttype == 'dos':
 			print("Device seems to be a disk in the guest")
 
-			BackupPartitionTable(sourceDevice, targetDevice)
-			BackupMBR(sourceDevice, targetDevice)
+			BackupPartitionTable(snapshotDevice, targetDevice)
+			BackupMBR(snapshotDevice, targetDevice)
 
-			partitionDevices = CreatePartitionMappings(sourceDevice)
+			partitionDevices = CreatePartitionMappings(snapshotDevice)
 			for partitionDevice in partitionDevices:
 				m = re.search("P\d+$", partitionDevice)
 				p = m.group(0)
@@ -343,7 +363,7 @@ for guest in guestConfigs:
 					if sourceDevice in excludeFilesOnSourceDevices:
 						print("Not mounting device, listed in excludeFilesOnSourceDevices")
 					else:
-						proc = subprocess.Popen([Config.get('General', 'mount'), '/dev/mapper/' + partitionDevice, 'disks/' + targetDevice + '/' + p])
+						proc = subprocess.Popen([Config.get('General', 'mount'), '-o', 'ro', '/dev/mapper/' + partitionDevice, 'disks/' + targetDevice + '/' + p])
 						proc.wait()
 						if proc.returncode != 0:
 							eprint("Failed to mount %s" % partitionDevice)
@@ -355,26 +375,26 @@ for guest in guestConfigs:
 				elif partitionPttype == 'dos':
 					print("Found dos partition on the disk, assume it's not needed")
 				else:
-					eprint("Unknown FS found on device %s, %s" % (sourceDevice, partitionDevice))
+					eprint("Unknown FS found on snapshot of device %s, %s" % (sourceDevice, partitionDevice))
 					exit(1)
 
 		else:
 			print("PTTYPE of device isn't dos. Assuming the device is a partition of some kind")
-			BackupPartitionTable(sourceDevice, targetDevice)
+			BackupPartitionTable(snapshotDevice, targetDevice)
 			# It's not likely that there actually is a MBR on this device, but let's be safe.
-			BackupMBR(sourceDevice, targetDevice)
+			BackupMBR(snapshotDevice, targetDevice)
 
 
-			partitionType = GetValueOfTagFromDevice(sourceDevice, 'TYPE')
+			partitionType = GetValueOfTagFromDevice(snapshotDevice, 'TYPE')
 			if partitionType == 'ext2' or partitionType == 'ext3' or partitionType == 'ext4':
-				print("Device %s has a readable filesystem (%s)" % (sourceDevice, partitionType))
+				print("Snapshot of device %s has a readable filesystem (%s)" % (sourceDevice, partitionType))
 				if sourceDevice in excludeFilesOnSourceDevices:
 					print("Not mounting device, listed in excludeFilesOnSourceDevices")
 				else:
-					proc = subprocess.Popen([Config.get('General', 'mount'), sourceDevice, 'disks/' + targetDevice])
+					proc = subprocess.Popen([Config.get('General', 'mount'), '-o', 'ro', snapshotDevice, 'disks/' + targetDevice])
 					proc.wait()
 					if proc.returncode != 0:
-						eprint("Failed to mount %s" % sourceDevice)
+						eprint("Failed to mount snapshot of %s" % sourceDevice)
 						exit(1)
 					mountPoints.append('disks/' + targetDevice)
 
@@ -385,7 +405,7 @@ for guest in guestConfigs:
 			elif partitionPttype == 'dos':
 				print("Found dos partition on the disk, assume it's not needed")
 			else:
-				eprint("Unknown FS found on device %s" % sourceDevice)
+				eprint("Unknown FS found on snapshot of device %s" % sourceDevice)
 				exit(1)
 			
 			
@@ -400,7 +420,7 @@ for guest in guestConfigs:
 	
 
 
-	print("Starting to cleanup after %s" % guest)
+	print("Starting to cleanup after %s" % guest['name'])
 	for mountPoint in mountPoints:
 		proc = subprocess.Popen([Config.get('General', 'umount'), mountPoint])
 		proc.wait()
@@ -408,10 +428,8 @@ for guest in guestConfigs:
 			eprint("Failed to umount %s" % mountPoint)
 			exit(1)
 			
-	for targetDevice, sourceDevice in guest['disks'].iteritems():
-		RemovePartitionMappings(sourceDevice)
-
 	for LVMsnapshot in LVMsnapshots:
+		RemovePartitionMappings(LVMsnapshot)
 		RemoveLVMSnapshot(LVMsnapshot)
 
 	for file in reversed(filesCreated):
