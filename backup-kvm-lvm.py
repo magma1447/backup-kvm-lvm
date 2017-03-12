@@ -5,11 +5,12 @@
 
 # TODO
 # Implement options to mount/umount a remote server with sshfs (some old related code still exists)
-# Implement a "igore-disk", Let the hostname be the header in the config.
 # Add support for sshfs
 # Add support for fsarchiver
 # Add support for pre-hook, ie mysql lock tables
 # Per host/disk overrides for other options, like borg compression
+# Color code output? shell stderr in red, shell stdout in grey, python stdout white, python errors (another) red.
+# Before making a snapshot, check that there is enough free space in the VG.
 
 
 from __future__ import print_function
@@ -210,17 +211,17 @@ def BackupUUID(targetDevice, p):
 def Borgbackup(name):
 	print("Starting backup (borgbackup)")
 	borgEnv = os.environ.copy()
-	borgEnv["BORG_RSH"] = Config.get('Method-Borgbackup', 'RSH')
-	borgEnv["BORG_PASSPHRASE"] = Config.get('Method-Borgbackup', 'PASSPHRASE')
+	borgEnv["BORG_RSH"] = Config.get('Method:Borgbackup', 'RSH')
+	borgEnv["BORG_PASSPHRASE"] = Config.get('Method:Borgbackup', 'PASSPHRASE')
 	cmd = [
-		Config.get('Method-Borgbackup', 'binary'),
+		Config.get('Method:Borgbackup', 'binary'),
 		'create',
 		'--numeric-owner',
 		'--lock-wait',
-		Config.get('Method-Borgbackup', 'LockWait'),
+		Config.get('Method:Borgbackup', 'LockWait'),
 		'--compression',
-		Config.get('Method-Borgbackup', 'Compression'),
-		Config.get('Method-Borgbackup', 'Repository') + '::' + name + '_{now}',
+		Config.get('Method:Borgbackup', 'Compression'),
+		Config.get('Method:Borgbackup', 'Repository') + '::' + name + '_{now}',
 		'.'
 	]
 	proc = subprocess.Popen(cmd, env=borgEnv)
@@ -231,16 +232,16 @@ def Borgbackup(name):
 
 	print("Running a repository check")
 	borgEnv = os.environ.copy()
-	borgEnv["BORG_RSH"] = Config.get('Method-Borgbackup', 'RSH')
-	borgEnv["BORG_PASSPHRASE"] = Config.get('Method-Borgbackup', 'PASSPHRASE')
+	borgEnv["BORG_RSH"] = Config.get('Method:Borgbackup', 'RSH')
+	borgEnv["BORG_PASSPHRASE"] = Config.get('Method:Borgbackup', 'PASSPHRASE')
 	cmd = [
-		Config.get('Method-Borgbackup', 'binary'),
+		Config.get('Method:Borgbackup', 'binary'),
 		'check',
 		'--lock-wait',
-		Config.get('Method-Borgbackup', 'LockWait'),
+		Config.get('Method:Borgbackup', 'LockWait'),
 		'--last',
-		Config.get('Method-Borgbackup', 'CheckLast'),
-		Config.get('Method-Borgbackup', 'Repository')
+		Config.get('Method:Borgbackup', 'CheckLast'),
+		Config.get('Method:Borgbackup', 'Repository')
 	]
 	proc = subprocess.Popen(cmd, env=borgEnv)
 	proc.wait()
@@ -282,6 +283,12 @@ for guest in guestConfigs:
 
 	os.mkdir(guest['name'])
 	os.chdir(guest['name'])
+
+
+	# Check the config if a host section exists where some devices has been excluded
+	excludeFilesOnSourceDevices = []
+	if Config.has_option("Guest:" + guest['name'], 'excludeFilesOnSourceDevices'):
+		excludeFilesOnSourceDevices = Config.get("Guest:" + guest['name'], 'excludeFilesOnSourceDevices').split(':')
 
 
 	# Add a copy of the libvirt xml
@@ -333,12 +340,15 @@ for guest in guestConfigs:
 					filesCreated.append(filename)
 
 
-					proc = subprocess.Popen([Config.get('General', 'mount'), '/dev/mapper/' + partitionDevice, 'disks/' + targetDevice + '/' + p])
-					proc.wait()
-					if proc.returncode != 0:
-						eprint("Failed to mount %s" % partitionDevice)
-						exit(1)
-					mountPoints.append('disks/' + targetDevice + '/' + p)
+					if sourceDevice in excludeFilesOnSourceDevices:
+						print("Not mounting device, listed in excludeFilesOnSourceDevices")
+					else:
+						proc = subprocess.Popen([Config.get('General', 'mount'), '/dev/mapper/' + partitionDevice, 'disks/' + targetDevice + '/' + p])
+						proc.wait()
+						if proc.returncode != 0:
+							eprint("Failed to mount %s" % partitionDevice)
+							exit(1)
+						mountPoints.append('disks/' + targetDevice + '/' + p)
 					
 				elif partitionType == 'swap':
 					print("Skipping swap partition")
@@ -358,12 +368,15 @@ for guest in guestConfigs:
 			partitionType = GetValueOfTagFromDevice(sourceDevice, 'TYPE')
 			if partitionType == 'ext2' or partitionType == 'ext3' or partitionType == 'ext4':
 				print("Device %s has a readable filesystem (%s)" % (sourceDevice, partitionType))
-				proc = subprocess.Popen([Config.get('General', 'mount'), sourceDevice, 'disks/' + targetDevice])
-				proc.wait()
-				if proc.returncode != 0:
-					eprint("Failed to mount %s" % sourceDevice)
-					exit(1)
-				mountPoints.append('disks/' + targetDevice)
+				if sourceDevice in excludeFilesOnSourceDevices:
+					print("Not mounting device, listed in excludeFilesOnSourceDevices")
+				else:
+					proc = subprocess.Popen([Config.get('General', 'mount'), sourceDevice, 'disks/' + targetDevice])
+					proc.wait()
+					if proc.returncode != 0:
+						eprint("Failed to mount %s" % sourceDevice)
+						exit(1)
+					mountPoints.append('disks/' + targetDevice)
 
 
 
