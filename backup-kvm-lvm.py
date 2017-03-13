@@ -12,6 +12,7 @@
 # Color code output? shell stderr in red, shell stdout in grey, python stdout white, python errors (another) red.
 # Before making a snapshot, check that there is enough free space in the VG.
 # Replace config with https://pypi.python.org/pypi/ConfigArgParse , not included in Debian Stable yet though. I would personally like to override the borg repository.
+# Default should show help, not backup all. Add an --all option for that. Depends on ConfigArgParse
 
 
 from __future__ import print_function
