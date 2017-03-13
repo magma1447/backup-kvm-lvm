@@ -94,14 +94,14 @@ def GetGuestList():
 		for i in xrange(1, len(sys.argv)):
 			xml = Config.get('KVM', 'QemuPath') + sys.argv[i]
 			if os.path.isfile(xml) and os.access(xml, os.R_OK):
-				guests.append(xml)
+				guests.append(Config.get('KVM', 'QemuPath') + xml)
 			else:
 				print("WARNING, %s does not exist" % xml)
 	else:
 		for file in os.listdir(Config.get('KVM', 'QemuPath')):
 			if file.endswith(".xml"):
 				guests.append(file)
-	
+
 	return guests
 
 def GetGuestConfigs():
