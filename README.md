@@ -10,6 +10,7 @@ If something goes wrong, the script will write to stderr and just abort. You wil
 There is no automatic restore. Though instructions of how to restore will be provided as soon as I have tested it enough.
 Not all filesystems are supported. This has been build to fulfill my needs only. Patches are welcome though.
 It has only been tested with guests using LVM storage.
+Does not support LVM usage within the guest.
 
 #### Cleanup
 In case the script dies, it will leave potentially leave a few mounts and device mappings. To cleanup, start by unmounting everything mounted in the WorkDir (early in the output). Then lvdisplay |grep Path |grep kvmbackupsnapshot. For each device listed, run kpartx -d -p P <device> and lvremove -f <device>.

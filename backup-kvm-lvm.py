@@ -297,6 +297,10 @@ tmpDir = tempfile.mkdtemp('', 'kvm-backup_', Config.get('Backup', 'TmpDir')) + '
 os.chdir(tmpDir)
 print("Current workdir: %s" % tmpDir)
 for guest in guestConfigs:
+	if Config.has_option("Guest:" + guest['name'], 'ignore') and Config.getboolean("Guest:" + guest['name'], 'ignore') == True:
+		print("Skipping guest %s, ignored in config" % guest['name'])
+		continue
+
 	print("Preparing backup of %s" % guest['name'])
 	filesCreated = []
 	directoriesCreated = []
