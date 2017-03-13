@@ -11,6 +11,7 @@
 # Per host/disk overrides for other options, like borg compression
 # Color code output? shell stderr in red, shell stdout in grey, python stdout white, python errors (another) red.
 # Before making a snapshot, check that there is enough free space in the VG.
+# Replace config with https://pypi.python.org/pypi/ConfigArgParse , not included in Debian Stable yet though. I would personally like to override the borg repository.
 
 
 from __future__ import print_function
