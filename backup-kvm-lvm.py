@@ -141,9 +141,9 @@ def CreateLVMSnapshot(sourceDevice):
 		eprint("Failed to create snapshot of %s" % sourceDevice)
 		exit(1)
 
-	# Find the VG name
+	# Find the VG name, use the original name. The snapshot might not exist in the path used.
 	VG = None
-	stdout = subprocess.check_output([Config.get('LVM', 'lvdisplay'), sourceDevice + Config.get('LVM', 'SnapshotSuffix')])
+	stdout = subprocess.check_output([Config.get('LVM', 'lvdisplay'), sourceDevice])
 	stdout = stdout.split("\n")
 	for line in stdout:
 		line = line.strip()
@@ -155,7 +155,7 @@ def CreateLVMSnapshot(sourceDevice):
 	if VG == None:
 		eprint("Failed to find VG for snapshot of %s" % sourceDevice)
 		exit(1)
-
+	
 	snapshotDevice = "/dev/" + VG + "/" + snapshotName
 
 	return snapshotDevice
