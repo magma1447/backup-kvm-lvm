@@ -10,7 +10,6 @@
 # Per host/disk overrides for other options, like borg compression. How?
 # Color code output? shell stderr in red, shell stdout in grey, python stdout white, python errors (another) red.
 # Before making a snapshot, check that there is enough free space in the VG.
-# When backing up multiple at once we are running check over and over on the same hosts. We need to move the check. check-last will then potentially be too small.
 # For all binary path options, check that they exist and that we can read/execute them.
 
 
