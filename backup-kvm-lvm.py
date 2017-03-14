@@ -5,20 +5,19 @@
 
 # TODO
 # Implement options to mount/umount a remote server with sshfs (some old related code still exists)
-# Add support for sshfs
 # Add support for fsarchiver
 # Add support for pre-hook, ie mysql lock tables
-# Per host/disk overrides for other options, like borg compression
+# Per host/disk overrides for other options, like borg compression. How?
 # Color code output? shell stderr in red, shell stdout in grey, python stdout white, python errors (another) red.
 # Before making a snapshot, check that there is enough free space in the VG.
-# Replace config with https://pypi.python.org/pypi/ConfigArgParse , not included in Debian Stable yet though. I would personally like to override the borg repository.
-# Default should show help, not backup all. Add an --all option for that. Depends on ConfigArgParse
+# When backing up multiple at once we are running check over and over on the same hosts. We need to move the check. check-last will then potentially be too small.
+# For all binary path options, check that they exist and that we can read/execute them.
 
 
 from __future__ import print_function
 import os
 import subprocess
-import ConfigParser
+import configargparse
 import sys
 import xml.etree.ElementTree
 import tempfile
@@ -30,46 +29,46 @@ def eprint(*args, **kwargs):
 	print(*args, file=sys.stderr, **kwargs)
 	return
 
-def MountSSHFS():
-	mountPoint = Config.get('Storage-SSHFS', 'MountPoint')
+#def MountSSHFS():
+#	mountPoint = Config.get('Storage-SSHFS', 'MountPoint')
+#
+#	if not (os.path.isdir(mountPoint) and os.access(mountPoint, os.W_OK)):
+#		eprint("SSHFS Local mount point doesn't exist")
+#		exit(1)
+#	if os.path.ismount(mountPoint):
+#		eprint("SSHFS Local mount point is already used")
+#		exit(1)
+#	if os.listdir(mountPoint) != []:
+#		eprint("SSHFS Local mount point is not empty")
+#		exit(1)
+#
+#	sshfs = Config.get('Storage-SSHFS', 'sshfs')
+#	if not (os.path.isfile(sshfs) and os.access(sshfs, os.X_OK)):
+#		eprint("Access denied on [%s]" % sshfs)
+#		exit(1)
+#
+#	print("Mounting sshfs")
+#	cmd = [
+#		sshfs,
+#		'-o',
+#		'IdentityFile=' + Config.get('Storage-SSHFS', 'Key'),
+#		Config.get('Storage-SSHFS', 'User') + '@' + Config.get('Storage-SSHFS', 'Host') + ':' + Config.get('Storage-SSHFS', 'RemotePath'), Config.get('Storage-SSHFS', 'MountPoint')
+#	]
+#	proc = subprocess.Popen(cmd)
+#	proc.wait()
+#	if proc.returncode != 0:
+#		eprint("Failed to execute [%s]" % sshfs)
+#		exit(1)
+#		
+#		
+#	return True
 
-	if not (os.path.isdir(mountPoint) and os.access(mountPoint, os.W_OK)):
-		eprint("SSHFS Local mount point doesn't exist")
-		exit(1)
-	if os.path.ismount(mountPoint):
-		eprint("SSHFS Local mount point is already used")
-		exit(1)
-	if os.listdir(mountPoint) != []:
-		eprint("SSHFS Local mount point is not empty")
-		exit(1)
-
-	sshfs = Config.get('Storage-SSHFS', 'sshfs')
-	if not (os.path.isfile(sshfs) and os.access(sshfs, os.X_OK)):
-		eprint("Access denied on [%s]" % sshfs)
-		exit(1)
-
-	print("Mounting sshfs")
-	cmd = [
-		sshfs,
-		'-o',
-		'IdentityFile=' + Config.get('Storage-SSHFS', 'Key'),
-		Config.get('Storage-SSHFS', 'User') + '@' + Config.get('Storage-SSHFS', 'Host') + ':' + Config.get('Storage-SSHFS', 'RemotePath'), Config.get('Storage-SSHFS', 'MountPoint')
-	]
-	proc = subprocess.Popen(cmd)
-	proc.wait()
-	if proc.returncode != 0:
-		eprint("Failed to execute [%s]" % sshfs)
-		exit(1)
-		
-		
-	return True
-
-def UnmountSSHFS():
-	print("Unmounting sshfs")
-	proc = subprocess.Popen([Config.get('General', 'fusermount'), '-u', Config.get('Storage-SSHFS', 'MountPoint')])
-	proc.wait()
-
-	return True
+#def UnmountSSHFS():
+#	print("Unmounting sshfs")
+#	proc = subprocess.Popen([Config.get('General', 'fusermount'), '-u', Config.get('Storage-SSHFS', 'MountPoint')])
+#	proc.wait()
+#
+#	return True
 
 #def BackupLVMViaSSHFS(Config):
 #	print("Backing up LVM config")
@@ -89,26 +88,16 @@ def UnmountSSHFS():
 #
 #	return True
 
-def GetGuestList():
-	guests = []
-	if len(sys.argv) > 1:
-		for i in xrange(1, len(sys.argv)):
-			xml = Config.get('KVM', 'QemuPath') + sys.argv[i]
-			if os.path.isfile(xml) and os.access(xml, os.R_OK):
-				guests.append(xml)
-			else:
-				print("WARNING, %s does not exist" % xml)
-	else:
-		for file in os.listdir(Config.get('KVM', 'QemuPath')):
-			if file.endswith(".xml"):
-				guests.append(Config.get('KVM', 'QemuPath') + file)
-
-	return guests
+def VerifyGuestList():
+	for file in options.xml:
+		if not os.path.isfile(file) or not os.access(file, os.R_OK):
+			eprint("Access denied to %s" % file)
+			exit(1)
 
 def GetGuestConfigs():
 	guestConfigs = []
 
-	for guest in guests:
+	for guest in options.xml:
 		x = xml.etree.ElementTree.parse(guest).getroot()
 		guestName = x.find("./name").text
 		guestConfig = { "xml": guest, "name": guestName, "disks": {} }
@@ -120,7 +109,7 @@ def GetGuestConfigs():
 			elif disk.attrib['device'] == 'disk':
 				sourceDev = disk.find("./source").attrib['dev']
 				targetDev = disk.find("./target").attrib['dev']
-				proc = subprocess.Popen([Config.get('LVM', 'lvs'), '--noheadings', sourceDev], stdout=FNULL)
+				proc = subprocess.Popen([options.binary_lvs, '--noheadings', sourceDev], stdout=FNULL)
 				r = proc.wait()
 				if r != 0:
 					eprint("Guest %s has a disk that is not a logical volume, %s" % guest, sourceDev)
@@ -136,8 +125,8 @@ def GetGuestConfigs():
 	return guestConfigs
 
 def CreateLVMSnapshot(sourceDevice):
-	snapshotName = os.path.basename(sourceDevice) + Config.get('LVM', 'SnapshotSuffix')
-	proc = subprocess.Popen([Config.get('LVM', 'lvcreate'), '-L' + Config.get('LVM', 'SnapshotSize'), '-s', '-n', snapshotName, sourceDevice])
+	snapshotName = os.path.basename(sourceDevice) + options.lvm_snapshot_suffix
+	proc = subprocess.Popen([options.binary_lvcreate, '-L' + options.lvm_snapshot_size, '-s', '-n', snapshotName, sourceDevice])
         r = proc.wait()
 	if r != 0:
 		eprint("Failed to create snapshot of %s" % sourceDevice)
@@ -145,7 +134,7 @@ def CreateLVMSnapshot(sourceDevice):
 
 	# Find the VG name, use the original name. The snapshot might not exist in the path used.
 	VG = None
-	stdout = subprocess.check_output([Config.get('LVM', 'lvdisplay'), sourceDevice])
+	stdout = subprocess.check_output([options.binary_lvdisplay, sourceDevice])
 	stdout = stdout.split("\n")
 	for line in stdout:
 		line = line.strip()
@@ -163,7 +152,7 @@ def CreateLVMSnapshot(sourceDevice):
 	return snapshotDevice
 
 def RemoveLVMSnapshot(snapshotDevice):
-	proc = subprocess.Popen([Config.get('LVM', 'lvremove'), '-f', snapshotDevice])
+	proc = subprocess.Popen([options.binary_lvremove, '-f', snapshotDevice])
         r = proc.wait()
 	if r != 0:
 		eprint("Failed to remove snapshot %s" % snapshotDevice)
@@ -171,7 +160,7 @@ def RemoveLVMSnapshot(snapshotDevice):
 
 def CreatePartitionMappings(snapshotDevice):
 	#kpartx -av -p P -s /dev/pgc-kvm-03-SAS600/pgc-http-01-kvmbackupsnapshot
-	stdout = subprocess.check_output([Config.get('General', 'kpartx'), '-a', '-v', '-p', 'P', '-s', snapshotDevice])
+	stdout = subprocess.check_output([options.binary_kpartx, '-a', '-v', '-p', 'P', '-s', snapshotDevice])
 	devices = []
 	for line in stdout.splitlines():
 		devices.append(line.split()[2])
@@ -179,20 +168,20 @@ def CreatePartitionMappings(snapshotDevice):
 
 def RemovePartitionMappings(snapshotDevice):
 	#kpartx -d -p P /dev/pgc-kvm-03-SAS600/pgc-http-01-kvmbackupsnapshot
-	proc = subprocess.Popen([Config.get('General', 'kpartx'), '-d', '-p', 'P', snapshotDevice])
+	proc = subprocess.Popen([options.binary_kpartx, '-d', '-p', 'P', snapshotDevice])
         r = proc.wait()
 	if r != 0:
 		eprint("Failed to remove partition mappings for %s" % snapshotDevice)
 		exit(1)
 
 def GetValueOfTagFromDevice(device, tag):
-	stdout = subprocess.check_output([Config.get('General', 'blkid'), '-o', 'value', '-s', tag, device])
+	stdout = subprocess.check_output([options.binary_blkid, '-o', 'value', '-s', tag, device])
 	return stdout.strip()
 
 def SaveLVDisplay(sourceDevice, targetDevice):
 	# lvdisplay, needed to recreate the logical volume
 	filename = 'disks/' + targetDevice + '.lvdisplay'
-	stdout = subprocess.check_output([Config.get('LVM', 'lvdisplay'), sourceDevice])
+	stdout = subprocess.check_output([options.binary_lvdisplay, sourceDevice])
 	fp = open(filename, 'w')
 	fp.write(stdout)
 	fp.close()
@@ -201,7 +190,7 @@ def SaveLVDisplay(sourceDevice, targetDevice):
 def BackupPartitionTable(sourceDevice, targetDevice):
 	# sfdisk, for recreating the partition table
 	filename = 'disks/' + targetDevice + '.sfdisk'
-	stdout = subprocess.check_output([Config.get('General', 'sfdisk'), '-d', sourceDevice])
+	stdout = subprocess.check_output([options.binary_sfdisk, '-d', sourceDevice])
 	fp = open(filename, 'w')
 	fp.write(stdout)
 	fp.close()
@@ -209,7 +198,7 @@ def BackupPartitionTable(sourceDevice, targetDevice):
 
 	# fdisk -l, most likely not needed, but gives the user an easy glance
 	filename = 'disks/' + targetDevice + '.fdisk'
-	stdout = subprocess.check_output([Config.get('General', 'fdisk'), '-l', sourceDevice])
+	stdout = subprocess.check_output([options.binary_fdisk, '-l', sourceDevice])
 	fp = open(filename, 'w')
 	fp.write(stdout)
 	fp.close()
@@ -218,7 +207,7 @@ def BackupPartitionTable(sourceDevice, targetDevice):
 def BackupMBR(sourceDevice, targetDevice):
 	# mbr
 	filename = 'disks/' + targetDevice + '.mbr'
-	proc = subprocess.Popen([Config.get('General', 'dd'), 'if=' + sourceDevice, 'bs=512', 'count=1', 'of=' + filename])
+	proc = subprocess.Popen([options.binary_dd, 'if=' + sourceDevice, 'bs=512', 'count=1', 'of=' + filename])
 	proc.wait()
 	filesCreated.append(filename)
 
@@ -232,74 +221,94 @@ def BackupUUID(targetDevice, p):
 
 def Borgbackup(name):
 	print("Starting backup (borgbackup)")
+
 	borgEnv = os.environ.copy()
-	borgEnv["BORG_RSH"] = Config.get('Method:Borgbackup', 'RSH')
-	borgEnv["BORG_PASSPHRASE"] = Config.get('Method:Borgbackup', 'PASSPHRASE')
+	if options.borg_RSH is not None:
+		borgEnv["BORG_RSH"] = options.borg_RSH
+	if options.borg_PASSPHRASE is not None:
+		borgEnv["BORG_PASSPHRASE"] = options.borg_PASSPHRASE
+
 	cmd = [
-		Config.get('Method:Borgbackup', 'binary'),
+		options.binary_borgbackup,
 		'create',
 		'--numeric-owner',
-		'--lock-wait',
-		Config.get('Method:Borgbackup', 'LockWait'),
-		'--compression',
-		Config.get('Method:Borgbackup', 'Compression'),
-		Config.get('Method:Borgbackup', 'Repository') + '::' + name + '_{now}',
-		'.'
 	]
+	if options.borg_lock_wait is not None:
+		cmd.extend([
+			'--lock-wait',
+			options.borg_lock_wait
+		])
+	if options.borg_compression is not None:
+		cmd.extend([
+			'--compression',
+			options.borg_compression
+		])
+	cmd.extend([
+		options.borg_repository + '::' + name + '_{now}', '.' 
+	])
+
 	proc = subprocess.Popen(cmd, env=borgEnv)
 	proc.wait()
 	if proc.returncode != 0:
 		eprint("borgbackup create failed")
 		exit(1)
 
-	print("Running a repository check")
-	borgEnv = os.environ.copy()
-	borgEnv["BORG_RSH"] = Config.get('Method:Borgbackup', 'RSH')
-	borgEnv["BORG_PASSPHRASE"] = Config.get('Method:Borgbackup', 'PASSPHRASE')
-	cmd = [
-		Config.get('Method:Borgbackup', 'binary'),
-		'check',
-		'--lock-wait',
-		Config.get('Method:Borgbackup', 'LockWait'),
-		'--last',
-		Config.get('Method:Borgbackup', 'CheckLast'),
-		Config.get('Method:Borgbackup', 'Repository')
-	]
-	proc = subprocess.Popen(cmd, env=borgEnv)
-	proc.wait()
-	if proc.returncode != 0:
-		eprint("borgbackup check failed")
-		exit(1)
-	
 	print("Borgbackup done")
 
 
 
-confFile = 'backup-kvm-lvm.conf'
 FNULL = open(os.devnull, 'w')
 
 
-print("Reading conf [%s]" % confFile)
-if not (os.path.isfile(confFile) and os.access(confFile, os.R_OK)):
-	exit("Can not find " + confFile + "\n");
-Config = ConfigParser.ConfigParser()
-Config.read(confFile)
+p = configargparse.ArgParser(default_config_files = [ '/etc/backup-kvm-lvm.conf', '~/.backup-kvm-lvm.conf', 'backup-kvm-lvm.conf' ])
+p.add('-c', '--config', is_config_file=True, help='config file path')
+p.add('--require-root', action='store_true', default=True, help='abort if not root')
+p.add('-d', '--tmp-dir', default='/tmp/', help='directory where the temporary workdir will be created')
+p.add('-m', '--method', default='borgbackup', help='backup method, currently only borgbackup')
+p.add('--binary-fusermount', default='/bin/fusermount', help='path to fusermount')
+p.add('--binary-blkid', default='/sbin/blkid', help='path to blkid')
+p.add('--binary-kpartx', default='/sbin/kpartx', help='path to kpartx')
+p.add('--binary-sfdisk', default='/sbin/sfdisk', help='path to sfdisk')
+p.add('--binary-mount', default='/bin/mount', help='path to mount')
+p.add('--binary-umount', default='/bin/umount', help='path to umount')
+p.add('--binary-dd', default='/bin/dd', help='path to dd')
+p.add('--binary-fdisk', default='/sbin/fdisk', help='path to fdisk')
+p.add('--binary-tune2fs', default='/sbin/tune2fs', help='path to tune2fs')
+p.add('--binary-lvs', default='/sbin/lvs', help='path to lvs')
+p.add('--binary-lvcreate', default='/sbin/lvcreate', help='path to lvcreate')
+p.add('--binary-lvremove', default='/sbin/lvremove', help='path to lvremove')
+p.add('--binary-lvdisplay', default='/sbin/lvdisplay', help='path to lvdisplay')
+p.add('-L', '--lvm-snapshot-size', default='10G', help='size of LVM snapshot')
+p.add('-S', '--lvm-snapshot-suffix', default='_kvmbackupsnapshot', help='LVM snapshot suffix')
+p.add('--binary-borgbackup', default='/usr/local/bin/borgbackup', help='path to borgbackup')
+p.add('--borg-RSH', default=None, help='RSH environment variable for borgbackup')
+p.add('--borg-PASSPHRASE', default=None, help='PASSPHRASE environment variable for borgbackup')
+p.add('--borg-compression', default=None, help='borgbackup compression')
+p.add('--borg-lock-wait', default=None, help='borgbackup lock-wait')
+# TODO break up repository in user, host, path
+p.add('--borg-repository', required=True, help='borgbackup repository')
+# TODO Add option to only check with the same host
+p.add('--borg-check-last', default=None, help='borgbackup check-last')
+p.add('--ignore-files-on-source-devices', default=[], nargs='*', help='don\'t backup files on these source devices, but do backup the metadata')
+p.add('--ignore-guests', default=[], nargs='*', help='ignore these guests')
+p.add('xml', nargs='+', help='guest xml files')
+options = p.parse_args()
 
 
-if Config.getboolean('General', 'RequireRoot'):
-	if os.geteuid() != 0:
-		exit("You need to have root privileges to run this script.\n");
 
-guests = GetGuestList()
+if options.require_root and os.geteuid() != 0:
+	eprint("You need to have root privileges to run this script.\n");
+	exit(1)
+
+
+VerifyGuestList()
 guestConfigs = GetGuestConfigs()
 
-
-
-tmpDir = tempfile.mkdtemp('', 'kvm-backup_', Config.get('Backup', 'TmpDir')) + '/'
+tmpDir = tempfile.mkdtemp('', 'kvm-backup_', options.tmp_dir) + '/'
 os.chdir(tmpDir)
 print("Current workdir: %s" % tmpDir)
 for guest in guestConfigs:
-	if Config.has_option("Guest:" + guest['name'], 'ignore') and Config.getboolean("Guest:" + guest['name'], 'ignore') == True:
+	if guest['name'] in options.ignore_guests:
 		print("Skipping guest %s, ignored in config" % guest['name'])
 		continue
 
@@ -309,12 +318,6 @@ for guest in guestConfigs:
 
 	os.mkdir(guest['name'])
 	os.chdir(guest['name'])
-
-
-	# Check the config if a host section exists where some devices has been excluded
-	excludeFilesOnSourceDevices = []
-	if Config.has_option("Guest:" + guest['name'], 'excludeFilesOnSourceDevices'):
-		excludeFilesOnSourceDevices = Config.get("Guest:" + guest['name'], 'excludeFilesOnSourceDevices').split(':')
 
 
 	# Add a copy of the libvirt xml
@@ -359,17 +362,17 @@ for guest in guestConfigs:
 
 					# Store a 'tune2fs -l'
 					filename = 'disks/' + targetDevice + '/' + p + '.ext'
-					stdout = subprocess.check_output([Config.get('General', 'tune2fs'), '-l', '/dev/mapper/' + partitionDevice])
+					stdout = subprocess.check_output([options.binary_tune2fs, '-l', '/dev/mapper/' + partitionDevice])
 					fp = open(filename, 'w')
 					fp.write(stdout)
 					fp.close()
 					filesCreated.append(filename)
 
 
-					if sourceDevice in excludeFilesOnSourceDevices:
-						print("Not mounting device, listed in excludeFilesOnSourceDevices")
+					if sourceDevice in options.ignore_files_on_source_devices:
+						print("Not mounting device, listed in ignore-files-on-source-devices")
 					else:
-						proc = subprocess.Popen([Config.get('General', 'mount'), '-o', 'ro', '/dev/mapper/' + partitionDevice, 'disks/' + targetDevice + '/' + p])
+						proc = subprocess.Popen([options.binary_mount, '-o', 'ro', '/dev/mapper/' + partitionDevice, 'disks/' + targetDevice + '/' + p])
 						proc.wait()
 						if proc.returncode != 0:
 							eprint("Failed to mount %s" % partitionDevice)
@@ -394,10 +397,10 @@ for guest in guestConfigs:
 			partitionType = GetValueOfTagFromDevice(snapshotDevice, 'TYPE')
 			if partitionType == 'ext2' or partitionType == 'ext3' or partitionType == 'ext4':
 				print("Snapshot of device %s has a readable filesystem (%s)" % (sourceDevice, partitionType))
-				if sourceDevice in excludeFilesOnSourceDevices:
-					print("Not mounting device, listed in excludeFilesOnSourceDevices")
+				if sourceDevice in options.ignore_files_on_source_devices:
+					print("Not mounting device, listed in ignore-files-on-source-devices")
 				else:
-					proc = subprocess.Popen([Config.get('General', 'mount'), '-o', 'ro', snapshotDevice, 'disks/' + targetDevice])
+					proc = subprocess.Popen([options.binary_mount, '-o', 'ro', snapshotDevice, 'disks/' + targetDevice])
 					proc.wait()
 					if proc.returncode != 0:
 						eprint("Failed to mount snapshot of %s" % sourceDevice)
@@ -417,7 +420,7 @@ for guest in guestConfigs:
 			
 
 
-	if Config.get('Backup', 'Method') == 'Borgbackup':
+	if options.method == 'borgbackup':
 		Borgbackup(guest['name'])
 	else:
 		eprint("Unknown backup method")
@@ -428,7 +431,7 @@ for guest in guestConfigs:
 
 	print("Starting to cleanup after %s" % guest['name'])
 	for mountPoint in mountPoints:
-		proc = subprocess.Popen([Config.get('General', 'umount'), mountPoint])
+		proc = subprocess.Popen([options.binary_umount, mountPoint])
 		proc.wait()
 		if proc.returncode != 0:
 			eprint("Failed to umount %s" % mountPoint)
@@ -449,20 +452,49 @@ for guest in guestConfigs:
 	print("Done with guest %s" % guest)
 	print('')
 
+
+
+if options.method == 'borgbackup' and options.borg_check_last is not None:
+	print("Running a repository check")
+	if len(guestConfigs) > options.borg_check_last:
+		print("Warning, backed up more guests than we will check (%d > %d)." % (len(guestConfigs), options.borg_check_last))
+
+	borgEnv = os.environ.copy()
+	if options.borg_RSH is not None:
+		borgEnv["BORG_RSH"] = options.borg_RSH
+	if options.borg_PASSPHRASE is not None:
+		borgEnv["BORG_PASSPHRASE"] = options.borg_PASSPHRASE
+
+	cmd = [
+		options.binary_borgbackup,
+		'check',
+	]
+	if options.borg_lock_wait is not None:
+		cmd.extend([
+			'--lock-wait',
+			options.borg_lock_wait
+		])
+	cmd.extend([
+		'--last',
+		options.borg_check_last,
+		options.borg_repository
+	])
+	proc = subprocess.Popen(cmd, env=borgEnv)
+	proc.wait()
+	if proc.returncode != 0:
+		eprint("borgbackup check failed")
+		exit(1)
+
+
 os.rmdir(tmpDir)
 
 print("BACKUP SUCCESSFUL")
 exit(0)
 
-if Config.get('Storage', 'Method') == 'sshfs':
-	MountSSHFS()
-
-
-
-	UnmountSSHFS()
-
-else:
-	eprint("Unknown storage method")
-	exit(1)
-
+#if Config.get('Storage', 'Method') == 'sshfs':
+#	MountSSHFS()
+#	UnmountSSHFS()
+#else:
+#	eprint("Unknown storage method")
+#	exit(1)
 
