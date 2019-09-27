@@ -190,11 +190,14 @@ def SaveLVDisplay(sourceDevice, targetDevice):
 def BackupPartitionTable(sourceDevice, targetDevice):
 	# sfdisk, for recreating the partition table
 	filename = 'disks/' + targetDevice + '.sfdisk'
-	stdout = subprocess.check_output([options.binary_sfdisk, '-d', sourceDevice])
-	fp = open(filename, 'w')
-	fp.write(stdout)
-	fp.close()
-	filesCreated.append(filename)
+	try:
+		stdout = subprocess.check_output([options.binary_sfdisk, '-d', sourceDevice])
+		fp = open(filename, 'w')
+		fp.write(stdout)
+		fp.close()
+		filesCreated.append(filename)
+	except Exception:
+		pass
 
 	# fdisk -l, most likely not needed, but gives the user an easy glance
 	filename = 'disks/' + targetDevice + '.fdisk'
