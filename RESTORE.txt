@@ -2,10 +2,10 @@
 
 
 # List the backups for a specific host.
-borgbackup list --prefix pgc-http-01 ../kvm-03.borg/
+borg list --prefix pgc-http-01 ../kvm-03.borg/
 
 # Extract a backup, needs to be extracted as root to keep uid/gid's.
-sudo borgbackup extract --sparse ../kvm-03.borg/pgc-http-01_2017-03-11T01:01:21
+sudo borg extract --sparse ../kvm-03.borg/pgc-http-01_2017-03-11T01:01:21
 
 # In case you did not restore the files directly to the KVM host we need to transfer them. Or at least some of them. The files for the filesystem could be transfered directly to that if we have issues with free space.
 # Create a temporary directory on the KVM host for the restore files. I use an LV I have created, formatted and mounted.

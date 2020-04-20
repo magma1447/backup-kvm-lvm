@@ -223,7 +223,7 @@ def BackupUUID(targetDevice, p):
 	filesCreated.append(filename)
 
 def Borgbackup(name):
-	print("Starting backup (borgbackup)")
+	print("Starting backup (borg)")
 
 	borgEnv = os.environ.copy()
 	if options.borg_RSH is not None:
@@ -232,7 +232,7 @@ def Borgbackup(name):
 		borgEnv["BORG_PASSPHRASE"] = options.borg_PASSPHRASE
 
 	cmd = [
-		options.binary_borgbackup,
+		options.binary_borg,
 		'create',
 		'--numeric-owner',
 	]
@@ -253,7 +253,7 @@ def Borgbackup(name):
 	proc = subprocess.Popen(cmd, env=borgEnv)
 	proc.wait()
 	if proc.returncode != 0:
-		eprint("borgbackup create failed")
+		eprint("borg create failed")
 		exit(1)
 
 	print("Borgbackup done")
@@ -267,7 +267,7 @@ p = configargparse.ArgParser(default_config_files = [ '/etc/backup-kvm-lvm.conf'
 p.add('-c', '--config', is_config_file=True, help='config file path')
 p.add('--require-root', action='store_true', default=True, help='abort if not root')
 p.add('-d', '--tmp-dir', default='/tmp/', help='directory where the temporary workdir will be created')
-p.add('-m', '--method', default='borgbackup', help='backup method, currently only borgbackup')
+p.add('-m', '--method', default='borg', help='backup method, currently only borg')
 p.add('--binary-fusermount', default='/bin/fusermount', help='path to fusermount')
 p.add('--binary-blkid', default='/sbin/blkid', help='path to blkid')
 p.add('--binary-kpartx', default='/sbin/kpartx', help='path to kpartx')
@@ -283,15 +283,15 @@ p.add('--binary-lvremove', default='/sbin/lvremove', help='path to lvremove')
 p.add('--binary-lvdisplay', default='/sbin/lvdisplay', help='path to lvdisplay')
 p.add('-L', '--lvm-snapshot-size', default='10G', help='size of LVM snapshot')
 p.add('-S', '--lvm-snapshot-suffix', default='_kvmbackupsnapshot', help='LVM snapshot suffix')
-p.add('--binary-borgbackup', default='/usr/local/bin/borgbackup', help='path to borgbackup')
-p.add('--borg-RSH', default=None, help='RSH environment variable for borgbackup')
-p.add('--borg-PASSPHRASE', default=None, help='PASSPHRASE environment variable for borgbackup')
-p.add('--borg-compression', default=None, help='borgbackup compression')
-p.add('--borg-lock-wait', default=None, help='borgbackup lock-wait')
+p.add('--binary-borg', default='/usr/local/bin/borg', help='path to borg')
+p.add('--borg-RSH', default=None, help='RSH environment variable for borg')
+p.add('--borg-PASSPHRASE', default=None, help='PASSPHRASE environment variable for borg')
+p.add('--borg-compression', default=None, help='borg compression')
+p.add('--borg-lock-wait', default=None, help='borg lock-wait')
 # TODO break up repository in user, host, path
-p.add('--borg-repository', required=True, help='borgbackup repository')
+p.add('--borg-repository', required=True, help='borg repository')
 # TODO Add option to only check with the same host
-p.add('--borg-check-last', default=None, help='borgbackup check-last')
+p.add('--borg-check-last', default=None, help='borg check-last')
 p.add('--ignore-files-on-source-devices', default=[], nargs='*', help='don\'t backup files on these source devices, but do backup the metadata')
 p.add('--ignore-guests', default=[], nargs='*', help='ignore these guests')
 p.add('xml', nargs='+', help='guest xml files')
@@ -424,7 +424,7 @@ for guest in guestConfigs:
 			
 
 
-	if options.method == 'borgbackup':
+	if options.method == 'borg':
 		Borgbackup(guest['name'])
 	else:
 		eprint("Unknown backup method")
@@ -458,7 +458,7 @@ for guest in guestConfigs:
 
 
 
-if options.method == 'borgbackup' and options.borg_check_last is not None:
+if options.method == 'borg' and options.borg_check_last is not None:
 	print("Running a repository check")
 	if len(guestConfigs) > options.borg_check_last:
 		print("Warning, backed up more guests than we will check (%d > %d)." % (len(guestConfigs), options.borg_check_last))
@@ -470,7 +470,7 @@ if options.method == 'borgbackup' and options.borg_check_last is not None:
 		borgEnv["BORG_PASSPHRASE"] = options.borg_PASSPHRASE
 
 	cmd = [
-		options.binary_borgbackup,
+		options.binary_borg,
 		'check',
 	]
 	if options.borg_lock_wait is not None:
@@ -486,7 +486,7 @@ if options.method == 'borgbackup' and options.borg_check_last is not None:
 	proc = subprocess.Popen(cmd, env=borgEnv)
 	proc.wait()
 	if proc.returncode != 0:
-		eprint("borgbackup check failed")
+		eprint("borg check failed")
 		exit(1)
 
 
